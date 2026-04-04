@@ -14,7 +14,7 @@ func TestServeMuxErrorError(t *testing.T) {
 		pattern: "pattern",
 		err:     errors.New("error"),
 	}
-	want := "httpmux: handler (method) pattern error: error"
+	want := "mixer: handler (method) pattern error: error"
 
 	as := Assert{t}
 	as.StrEqual(err.Error(), want, "ServeMuxError.Error() got")
@@ -36,18 +36,18 @@ func TestGetPathParams(t *testing.T) {
 	var exp PathParams // empty
 
 	ctx := context.Background()
-	req := mustReq(http.NewRequestWithContext(ctx, "", "", nil))
+	req := mustReq(http.NewRequestWithContext(ctx, "", "", http.NoBody))
 
 	as := Assert{t}
 	as.Equal(GetPathParams(req), exp, "params not set")
 
-	ctx = context.WithValue(ctx, &contextKey{"wrong-key"}, PathParams{0: 12, 1: "abc"})
-	req = mustReq(http.NewRequestWithContext(ctx, "", "", nil))
+	ctx = context.WithValue(ctx, contextKey("wrong-key"), PathParams{0: 12, 1: "abc"})
+	req = mustReq(http.NewRequestWithContext(ctx, "", "", http.NoBody))
 
 	as.Equal(GetPathParams(req), exp, "wrong context key")
 
 	ctx = context.WithValue(ctx, PathParamsCtxKey, PathParams{0: 12, 1: "abc"})
-	req = mustReq(http.NewRequestWithContext(ctx, "", "", nil))
+	req = mustReq(http.NewRequestWithContext(ctx, "", "", http.NoBody))
 	exp = PathParams{0: 12, 1: "abc"}
 
 	as.Equal(GetPathParams(req), exp, "path params exist")
@@ -107,7 +107,7 @@ func TestServeMuxHandlerLogicCases(t *testing.T) {
 		},
 	}}
 
-	req := mustReq(http.NewRequest(http.MethodGet, "/", nil))
+	req := mustReq(http.NewRequestWithContext(context.Background(), http.MethodGet, "/", http.NoBody))
 	ctx := context.Background()
 	got, err := mux.Handler(req)
 
@@ -116,21 +116,21 @@ func TestServeMuxHandlerLogicCases(t *testing.T) {
 	as.Equal(err, nil, "for / error")
 	as.Equal(req.Context(), ctx, "for / context")
 
-	req = mustReq(http.NewRequest(http.MethodPut, "/", nil))
+	req = mustReq(http.NewRequestWithContext(context.Background(), http.MethodPut, "/", http.NoBody))
 	got, err = mux.Handler(req)
 
 	as.Equal(got, nil, "non-exist handler got")
 	as.Equal(err, notFoundError(http.MethodPut, "/"), "non-exist handler error")
 	as.Equal(req.Context(), ctx, "non-exist handler context")
 
-	req = mustReq(http.NewRequest(http.MethodPut, "/a", nil))
+	req = mustReq(http.NewRequestWithContext(context.Background(), http.MethodPut, "/a", http.NoBody))
 	got, err = mux.Handler(req)
 
 	as.Equal(got, TestHandler("put"), "for /a got")
 	as.Equal(err, nil, "for /a error")
 	as.Equal(req.Context(), ctx, "for /a context")
 
-	req = mustReq(http.NewRequest(http.MethodPost, "/a/123", nil))
+	req = mustReq(http.NewRequestWithContext(context.Background(), http.MethodPost, "/a/123", http.NoBody))
 	ctx = context.WithValue(ctx, PathParamsCtxKey, PathParams{0: 123})
 	got, err = mux.Handler(req)
 
@@ -138,7 +138,7 @@ func TestServeMuxHandlerLogicCases(t *testing.T) {
 	as.Equal(err, nil, "for int error")
 	as.Equal(req.Context(), ctx, "for int context")
 
-	req = mustReq(http.NewRequest(http.MethodPost, "/a/one_two_three", nil))
+	req = mustReq(http.NewRequestWithContext(context.Background(), http.MethodPost, "/a/one_two_three", http.NoBody))
 	ctx = context.Background()
 	got, err = mux.Handler(req)
 
@@ -146,8 +146,8 @@ func TestServeMuxHandlerLogicCases(t *testing.T) {
 	as.Equal(err, notFoundError(http.MethodPost, "/a/one_two_three"), "for int wrong type error")
 	as.Equal(req.Context(), ctx, "for int wrong type context")
 
-	ctx = context.WithValue(context.Background(), &contextKey{"old-context"}, "oldContext")
-	req = mustReq(http.NewRequestWithContext(ctx, http.MethodPost, "/a/321", nil))
+	ctx = context.WithValue(context.Background(), contextKey("old-context"), "oldContext")
+	req = mustReq(http.NewRequestWithContext(ctx, http.MethodPost, "/a/321", http.NoBody))
 	ctx = context.WithValue(ctx, PathParamsCtxKey, PathParams{0: 321})
 	got, err = mux.Handler(req)
 
@@ -155,7 +155,7 @@ func TestServeMuxHandlerLogicCases(t *testing.T) {
 	as.Equal(err, nil, "save context for original request error")
 	as.Equal(req.Context(), ctx, "save context for original request context")
 
-	req = mustReq(http.NewRequest(http.MethodPost, "/123", nil))
+	req = mustReq(http.NewRequestWithContext(context.Background(), http.MethodPost, "/123", http.NoBody))
 	ctx = context.Background()
 	got, err = mux.Handler(req)
 
@@ -163,7 +163,7 @@ func TestServeMuxHandlerLogicCases(t *testing.T) {
 	as.Equal(err, notFoundError(http.MethodPost, "/123"), "no handler for param error")
 	as.Equal(req.Context(), ctx, "no handler for param context")
 
-	req = mustReq(http.NewRequest(http.MethodDelete, "/a/12/b/abc", nil))
+	req = mustReq(http.NewRequestWithContext(context.Background(), http.MethodDelete, "/a/12/b/abc", http.NoBody))
 	ctx = context.WithValue(ctx, PathParamsCtxKey, PathParams{0: 12, 1: "abc"})
 	got, err = mux.Handler(req)
 
@@ -171,12 +171,49 @@ func TestServeMuxHandlerLogicCases(t *testing.T) {
 	as.Equal(err, nil, "multiple path params error")
 	as.Equal(req.Context(), ctx, "multiple path params context")
 
-	mux = New() // create new for cleanup the tree
+	mux = New() // create new for clean up the tree
 	got, err = mux.Handler(req)
 
 	as.Equal(got, nil, "fresh ServeMux got")
 	as.Equal(err, notFoundError(http.MethodDelete, "/a/12/b/abc"), "fresh ServeMux error")
 	as.Equal(req.Context(), ctx, "fresh ServeMux context")
+}
+
+func TestServeMuxHandlerPreferStaticOverParam(t *testing.T) {
+	mux := New()
+	mux.Get("/catalog/me", TestHandler("static"))
+	mux.Get("/catalog/:str", TestHandler("param"))
+
+	req := mustReq(http.NewRequestWithContext(context.Background(), http.MethodGet, "/catalog/me", http.NoBody))
+	got, err := mux.Handler(req)
+
+	as := Assert{t}
+	as.Equal(got, TestHandler("static"), "prefer static route")
+	as.Equal(err, nil, "prefer static route error")
+	as.Equal(GetPathParams(req), PathParams(nil), "prefer static route params")
+
+	req = mustReq(http.NewRequestWithContext(context.Background(), http.MethodGet, "/catalog/abc", http.NoBody))
+	got, err = mux.Handler(req)
+
+	as.Equal(got, TestHandler("param"), "fallback to param route")
+	as.Equal(err, nil, "fallback to param route error")
+	as.Equal(GetPathParams(req), PathParams{0: "abc"}, "fallback to param route params")
+}
+
+func TestServeMuxHandlerNotFoundWhenMethodsNil(t *testing.T) {
+	mux := New()
+	mux.tree.root = &node{
+		Children: map[string]*node{
+			"catalog": {},
+		},
+	}
+
+	req := mustReq(http.NewRequestWithContext(context.Background(), http.MethodGet, "/catalog", http.NoBody))
+	got, err := mux.Handler(req)
+
+	as := Assert{t}
+	as.Equal(got, nil, "methods nil handler")
+	as.Equal(err, notFoundError(http.MethodGet, "/catalog"), "methods nil error")
 }
 
 func TestServeMuxHandle(t *testing.T) {
@@ -188,7 +225,7 @@ func TestServeMuxHandle(t *testing.T) {
 
 		defer func() {
 			err := recover()
-			if err == nil || errors.Unwrap(err.(error)) != ErrMethod {
+			if err == nil || !errors.Is(errors.Unwrap(err.(error)), ErrMethod) {
 				t.Errorf("ServeMux.Handle() got = %v, want = %v", err, ErrMethod)
 			}
 
@@ -203,7 +240,7 @@ func TestServeMuxHandle(t *testing.T) {
 
 		defer func() {
 			err := recover()
-			if err == nil || errors.Unwrap(err.(error)) != ErrHandler {
+			if err == nil || !errors.Is(errors.Unwrap(err.(error)), ErrHandler) {
 				t.Errorf("ServeMux.Handle() got = %v, want = %v", err, ErrHandler)
 			}
 
@@ -218,7 +255,7 @@ func TestServeMuxHandle(t *testing.T) {
 
 		defer func() {
 			err := recover()
-			if err == nil || errors.Unwrap(err.(error)) != ErrPattern {
+			if err == nil || !errors.Is(errors.Unwrap(err.(error)), ErrPattern) {
 				t.Errorf("ServeMux.Handle() got = %v, want = %v", err, ErrPattern)
 			}
 
@@ -255,7 +292,7 @@ func TestServeMuxHandle(t *testing.T) {
 
 		defer func() {
 			err := recover()
-			if err == nil || errors.Unwrap(err.(error)) != ErrDuplicate {
+			if err == nil || !errors.Is(errors.Unwrap(err.(error)), ErrDuplicate) {
 				t.Errorf("ServeMux.Handle() got = %v, want = %v", err, ErrDuplicate)
 			}
 
@@ -288,6 +325,7 @@ func TestServeMuxGet(t *testing.T) {
 			},
 		},
 	}
+
 	mux.Get("/", TestHandler("get"))
 
 	as := Assert{t}
@@ -307,6 +345,7 @@ func TestServeMuxHead(t *testing.T) {
 			},
 		},
 	}
+
 	mux.Head("/", TestHandler("head"))
 
 	as := Assert{t}
@@ -326,6 +365,7 @@ func TestServeMuxPost(t *testing.T) {
 			},
 		},
 	}
+
 	mux.Post("/", TestHandler("post"))
 
 	as := Assert{t}
@@ -345,6 +385,7 @@ func TestServeMuxPut(t *testing.T) {
 			},
 		},
 	}
+
 	mux.Put("/", TestHandler("put"))
 
 	as := Assert{t}
@@ -364,6 +405,7 @@ func TestServeMuxPatch(t *testing.T) {
 			},
 		},
 	}
+
 	mux.Patch("/", TestHandler("patch"))
 
 	as := Assert{t}
@@ -383,6 +425,7 @@ func TestServeMuxDelete(t *testing.T) {
 			},
 		},
 	}
+
 	mux.Delete("/", TestHandler("delete"))
 
 	as := Assert{t}
@@ -402,6 +445,7 @@ func TestServeMuxConnect(t *testing.T) {
 			},
 		},
 	}
+
 	mux.Connect("/", TestHandler("connect"))
 
 	as := Assert{t}
@@ -421,6 +465,7 @@ func TestServeMuxOptions(t *testing.T) {
 			},
 		},
 	}
+
 	mux.Options("/", TestHandler("options"))
 
 	as := Assert{t}
@@ -440,6 +485,7 @@ func TestServeMuxTrace(t *testing.T) {
 			},
 		},
 	}
+
 	mux.Trace("/", TestHandler("trace"))
 
 	as := Assert{t}
@@ -455,7 +501,7 @@ func TestServeMuxHandleFunc(t *testing.T) {
 
 		defer func() {
 			err := recover()
-			if err == nil || errors.Unwrap(err.(error)) != ErrHandler {
+			if err == nil || !errors.Is(errors.Unwrap(err.(error)), ErrHandler) {
 				t.Errorf("ServeMux.HandleFunc() got = %v, want = %v", err, ErrHandler)
 			}
 
@@ -466,7 +512,7 @@ func TestServeMuxHandleFunc(t *testing.T) {
 	})
 
 	t.Run("success add handler", func(t *testing.T) {
-		mux.HandleFunc(http.MethodPut, "/", func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc(http.MethodPut, "/", func(w http.ResponseWriter, _ *http.Request) {
 			_, _ = w.Write([]byte("ok"))
 		})
 
@@ -477,7 +523,7 @@ func TestServeMuxHandleFunc(t *testing.T) {
 }
 
 func TestServeMuxGetFunc(t *testing.T) {
-	fn := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }
+	fn := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 
 	mux := New() // for direct compatibility (for not allocate tree)
 	resp := httptest.ResponseRecorder{}
@@ -492,7 +538,7 @@ func TestServeMuxGetFunc(t *testing.T) {
 }
 
 func TestServeMuxHeadFunc(t *testing.T) {
-	fn := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusCreated) }
+	fn := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) }
 
 	mux := New() // for direct compatibility (for not allocate tree)
 	resp := httptest.ResponseRecorder{}
@@ -507,7 +553,7 @@ func TestServeMuxHeadFunc(t *testing.T) {
 }
 
 func TestServeMuxPostFunc(t *testing.T) {
-	fn := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusAccepted) }
+	fn := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAccepted) }
 
 	mux := New() // for direct compatibility (for not allocate tree)
 	resp := httptest.ResponseRecorder{}
@@ -522,7 +568,7 @@ func TestServeMuxPostFunc(t *testing.T) {
 }
 
 func TestServeMuxPutFunc(t *testing.T) {
-	fn := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNonAuthoritativeInfo) }
+	fn := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNonAuthoritativeInfo) }
 
 	mux := New() // for direct compatibility (for not allocate tree)
 	resp := httptest.ResponseRecorder{}
@@ -537,7 +583,7 @@ func TestServeMuxPutFunc(t *testing.T) {
 }
 
 func TestServeMuxPatchFunc(t *testing.T) {
-	fn := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }
+	fn := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
 
 	mux := New() // for direct compatibility (for not allocate tree)
 	resp := httptest.ResponseRecorder{}
@@ -552,7 +598,7 @@ func TestServeMuxPatchFunc(t *testing.T) {
 }
 
 func TestServeMuxDeleteFunc(t *testing.T) {
-	fn := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusResetContent) }
+	fn := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusResetContent) }
 
 	mux := New() // for direct compatibility (for not allocate tree)
 	resp := httptest.ResponseRecorder{}
@@ -567,7 +613,7 @@ func TestServeMuxDeleteFunc(t *testing.T) {
 }
 
 func TestServeMuxConnectFunc(t *testing.T) {
-	fn := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusPartialContent) }
+	fn := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusPartialContent) }
 
 	mux := New() // for direct compatibility (for not allocate tree)
 	resp := httptest.ResponseRecorder{}
@@ -582,7 +628,7 @@ func TestServeMuxConnectFunc(t *testing.T) {
 }
 
 func TestServeMuxOptionsFunc(t *testing.T) {
-	fn := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusMultiStatus) }
+	fn := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusMultiStatus) }
 
 	mux := New() // for direct compatibility (for not allocate tree)
 	resp := httptest.ResponseRecorder{}
@@ -597,7 +643,7 @@ func TestServeMuxOptionsFunc(t *testing.T) {
 }
 
 func TestServeMuxTraceFunc(t *testing.T) {
-	fn := func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusAlreadyReported) }
+	fn := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusAlreadyReported) }
 
 	mux := New() // for direct compatibility (for not allocate tree)
 	resp := httptest.ResponseRecorder{}
@@ -610,9 +656,10 @@ func TestServeMuxTraceFunc(t *testing.T) {
 	as := Assert{t}
 	as.IntEqual(resp.Code, http.StatusAlreadyReported, "ServeMux.TraceFunc()")
 }
+
 func TestServeMuxServeHTTP(t *testing.T) {
 	mux := New()
-	mux.HandleFunc(http.MethodGet, "/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(http.MethodGet, "/", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -622,12 +669,16 @@ func TestServeMuxServeHTTP(t *testing.T) {
 	tc := ts.Client()
 	as := Assert{t}
 
-	respGood := mustResp(tc.Get(ts.URL))
+	respGood, _ := tc.Get(ts.URL)
+
 	defer func() { _ = respGood.Body.Close() }()
 
 	as.IntEqual(respGood.StatusCode, http.StatusOK, "success")
 
-	respBad := mustResp(tc.Head(ts.URL))
+	respBad, _ := tc.Head(ts.URL)
+
+	defer func() { _ = respBad.Body.Close() }()
+
 	as.IntEqual(respBad.StatusCode, http.StatusNotFound, "failure")
 }
 

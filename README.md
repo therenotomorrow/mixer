@@ -3,14 +3,14 @@ mixer
 
 `mixer` is a simple parametrized router for building HTTP services.
 
-The designed API is a similar to [httprouter.Router](https://godoc.org/github.com/julienschmidt/httprouter#Router)
+The designed API is similar to [httprouter.Router](https://godoc.org/github.com/julienschmidt/httprouter#Router)
 but allows us to use the typed path params.
 
 Install
 -------
 
 ```bash
-$ go get -u github.com/kxnes/mixer
+$ go get -u github.com/therenotomorrow/mixer
 ```
 
 How it works
@@ -31,17 +31,25 @@ The inner tree structure will be like this:
 
 ![tree](tree.png)
 
-And you can see that URL will be separated by parts and search will be down to leaf where URL registered.
-And the nodes contains only one part or special part like `:` for typed param and `/` for trailing slash.
+And you can see that URL will be separated by parts and search will be down to leaf where the URL is registered.
+And the nodes contain only one part or special part like `:` for typed param and `/` for trailing slash.
 
-What about API
---------------
+Important behavior
+------------------
 
-All available API described in [api.go](api.go). Here the full list:
+- `ServeMux` is not safe for concurrent route registration.
+- Static segments and typed params can coexist on the same level, both `/users/me` and `/users/:str` are valid.
+- Route matching prefers the static segment first, then typed param fallback.
+- `Handle` and `HandleFunc` panic on invalid setup.
+
+What about API?
+---------------
+
+All available API described in [api.go](api.go). Here is the full list:
 
 ```go
 // GetPathParams returns the path params registered in r.Context() or nil otherwise.
-func GetPathParams(r *http.Request) PathParams
+func GetPathParams(r *http.Request) PathParams {}
 
 // Handler returns the handler to use for the given request.
 func (mux *ServeMux) Handler(r *http.Request) (http.Handler, error)
@@ -105,6 +113,9 @@ func (mux *ServeMux) OptionsFunc(pattern string, handler func(http.ResponseWrite
 
 // TraceFunc registers the TRACE handler function for the given pattern.
 func (mux *ServeMux) TraceFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) 
+
+// ServeHTTP implements the http.Handler interface.
+func (mux *ServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 // New allocates and returns a new ServeMux.
 func New() *ServeMux

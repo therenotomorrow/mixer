@@ -1,125 +1,180 @@
-package mixer
+package mixer_test
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
+	"maps"
 	"net/http"
+	"slices"
 	"sync"
+	"time"
+
+	"github.com/therenotomorrow/mixer"
 )
 
-type apiHandler struct{}
-
-func (apiHandler) ServeHTTP(http.ResponseWriter, *http.Request) {}
-
-func ExampleServeMuxHandle() {
-	mux := New()
-	mux.Handle(http.MethodGet, "/api/v1", apiHandler{})
-	mux.HandleFunc(http.MethodGet, "/", func(w http.ResponseWriter, r *http.Request) {
-		_, _ = fmt.Fprintf(w, "Welcome to the home page!")
-	})
-}
-
 type Item struct {
-	ID   int    `json:"id,omitempty"`
 	Name string `json:"name,omitempty"`
+	ID   int    `json:"id,omitempty"`
 }
 
 type Catalog struct {
-	mu    *sync.RWMutex
 	items map[int]*Item
-	last  int
+	ident int
+	mutex sync.RWMutex
+}
+
+func JSONResponse[T *Item | []*Item](writer http.ResponseWriter, code int, body T) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(code)
+
+	if body == nil {
+		_, _ = fmt.Fprintln(writer, "{}")
+
+		return
+	}
+
+	err := json.NewEncoder(writer).Encode(body)
+	if err != nil {
+		slog.Error("cannot encode body", "error", err, "body", body)
+		http.Error(writer, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+
+		return
+	}
+}
+
+func NewCatalog() *Catalog {
+	return &Catalog{
+		mutex: sync.RWMutex{},
+		items: make(map[int]*Item),
+		ident: 0,
+	}
 }
 
 func (c *Catalog) Get(id int) *Item {
-	c.mu.RLock()
-	i := c.items[id]
-	c.mu.RUnlock()
-	return i
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	return c.items[id]
 }
 
-func (c *Catalog) Add(name string) {
-	c.mu.Lock()
-	c.items[c.last] = &Item{ID: c.last, Name: name}
-	c.last++
-	c.mu.Unlock()
+func (c *Catalog) Add(name string) *Item {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	c.ident++
+	c.items[c.ident] = &Item{ID: c.ident, Name: name}
+
+	return c.items[c.ident]
+}
+
+func (c *Catalog) List() []*Item {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	items := slices.Collect(maps.Values(c.items))
+
+	slices.SortFunc(items, func(a, b *Item) int {
+		return a.ID - b.ID
+	})
+
+	return items
 }
 
 func (c *Catalog) All(w http.ResponseWriter, _ *http.Request) {
-	c.mu.RLock()
-	err := json.NewEncoder(w).Encode(c.items)
-	c.mu.RUnlock()
+	items := c.List()
 
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	JSONResponse(w, http.StatusOK, items)
 }
 
 func (c *Catalog) Create(w http.ResponseWriter, r *http.Request) {
 	name := r.PostFormValue("name")
+	item := c.Add(name)
 
-	c.mu.Lock()
-	c.last++
-	c.items[c.last] = &Item{ID: c.last, Name: name}
-	c.mu.Unlock()
-
-	w.WriteHeader(http.StatusCreated)
+	JSONResponse(w, http.StatusCreated, item)
 }
 
 func (c *Catalog) Retrieve(w http.ResponseWriter, r *http.Request) {
-	id := GetPathParams(r)[0].(int)
+	id := mixer.GetPathParams(r)[0].(int)
+	item := c.Get(id)
 
-	c.mu.RLock()
-	i := c.items[id]
-	c.mu.RUnlock()
-
-	if i == nil {
-		i = &Item{}
-	}
-
-	err := json.NewEncoder(w).Encode(i)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	JSONResponse(w, http.StatusOK, item)
 }
 
-func ExampleServeMuxUsage() {
-	catalog := Catalog{
-		mu: &sync.RWMutex{},
-		items: map[int]*Item{
-			1: {ID: 1, Name: "Foo"},
-			2: {ID: 2, Name: "Bar"},
-		},
-		last: 2,
-	}
+func readAndPrint(resp *http.Response) {
+	defer func() { _ = resp.Body.Close() }()
 
-	mux := New()
+	buf := bytes.NewBuffer(nil)
+	_, _ = buf.ReadFrom(resp.Body)
+
+	fmt.Printf("code: %d, body: %s", resp.StatusCode, buf.String())
+}
+
+func ExampleNewServeMux() {
+	catalog := NewCatalog()
+	catalog.Add("Foo")
+	catalog.Add("Bar")
+
+	mux := mixer.New()
+	srv := http.Server{Addr: ":8080", Handler: mux}
 
 	mux.GetFunc("/catalog/", catalog.All)
 	mux.PostFunc("/catalog/", catalog.Create)
 	mux.GetFunc("/catalog/:int", catalog.Retrieve)
 
-	// taste it!
-	//
-	// $ curl http://127.0.0.1:8080/catalog
-	// # 404 page not found
-	//
-	// $ curl http://127.0.0.1:8080/catalog/
-	// # {"1":{"id":1,"name":"Foo"},"2":{"id":2,"name":"Bar"}}
-	//
-	// $ curl -X POST -d "name=Mem" http://127.0.0.1:8080/catalog/
-	//
-	// $ curl http://127.0.0.1:8080/catalog/
-	// # {"1":{"id":1,"name":"Foo"},"2":{"id":2,"name":"Bar"},"3":{"id":3,"name":"Mem"}}
-	//
-	// $ curl http://127.0.0.1:8080/catalog/3
-	// # {"id":3,"name":"Mem"}
-	//
-	// $ curl http://127.0.0.1:8080/catalog/4
-	// # {}
-	//
-	// $ curl -X POST http://127.0.0.1:8080/catalog/4
-	// # 404 page not found
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	log.Fatalln(http.ListenAndServe(":8080", mux))
+	go func() { _ = srv.ListenAndServe() }()
+
+	go func() {
+		var resp *http.Response
+
+		time.Sleep(time.Second)
+
+		resp, _ = http.Get("http://127.0.0.1:8080/catalog")
+		readAndPrint(resp)
+
+		resp, _ = http.Get("http://127.0.0.1:8080/catalog/")
+		readAndPrint(resp)
+
+		resp, _ = http.Post(
+			"http://127.0.0.1:8080/catalog/",
+			"application/x-www-form-urlencoded",
+			bytes.NewBufferString("name=Mem"),
+		)
+		readAndPrint(resp)
+
+		resp, _ = http.Get("http://127.0.0.1:8080/catalog/")
+		readAndPrint(resp)
+
+		resp, _ = http.Get("http://127.0.0.1:8080/catalog/3")
+		readAndPrint(resp)
+
+		resp, _ = http.Get("http://127.0.0.1:8080/catalog/4")
+		readAndPrint(resp)
+
+		resp, _ = http.Post(
+			"http://127.0.0.1:8080/catalog/4",
+			"application/x-www-form-urlencoded",
+			bytes.NewBufferString("name=Kek"),
+		)
+		readAndPrint(resp)
+
+		cancel()
+	}()
+
+	<-ctx.Done()
+	_ = srv.Shutdown(ctx)
+
+	// Output:
+	// code: 404, body: 404 page not found
+	// code: 200, body: [{"name":"Foo","id":1},{"name":"Bar","id":2}]
+	// code: 201, body: {"name":"Mem","id":3}
+	// code: 200, body: [{"name":"Foo","id":1},{"name":"Bar","id":2},{"name":"Mem","id":3}]
+	// code: 200, body: {"name":"Mem","id":3}
+	// code: 200, body: {}
+	// code: 404, body: 404 page not found
 }

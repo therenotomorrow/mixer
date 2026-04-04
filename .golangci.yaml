@@ -1,0 +1,78 @@
+version: "2"
+
+linters:
+  default: all
+  disable:
+    # deprecated: by golangci-lint
+    - wsl
+    # useless: decide to not use it
+    - depguard
+    # this is not for parallel usage
+    - paralleltest
+  settings:
+    testpackage:
+      allow-packages:
+        - mixer
+    gocritic:
+      enable-all: true
+  exclusions:
+    rules:
+      # simple rules for examples
+      - path: example_test.go
+        linters:
+          - noctx
+          - bodyclose
+      # simple rules for tests
+      - path: _test\.go
+        linters:
+          - cyclop
+          - noctx
+          - err113
+          - funlen
+          - gosec
+          - varnamelen
+          - forcetypeassert
+          - exhaustruct
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/therenotomorrow/ko)
+    gofmt:
+      simplify: true
+      rewrite-rules:
+        - pattern: 'interface{}'
+          replacement: 'any'
+    golines:
+      max-len: 120
+      tab-len: 4
+      shorten-comments: true
+      chain-split-dots: true
+
+issues:
+  fix: true
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
+output:
+  formats:
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
+      colors: true
+  show-stats: true
+
+run:
+  go: "1.26"
+  allow-parallel-runners: true
+  timeout: 5m

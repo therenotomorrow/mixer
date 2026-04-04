@@ -1,3 +1,3 @@
-module github.com/kxnes/mixer
+module github.com/therenotomorrow/mixer
 
-go 1.13
+go 1.26

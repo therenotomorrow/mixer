@@ -1,4 +1,4 @@
-// Package mixer contains the HTTP multiplexer based on similar radix tree data structure.
+// Package mixer contains the HTTP multiplexer based on a similar radix tree data structure.
 package mixer
 
 import (
@@ -8,14 +8,14 @@ import (
 )
 
 type (
-	// PathParams represents map of path params that will store by index.
-	PathParams map[int]interface{}
+	// PathParams represents a map of path params that will store by index.
+	PathParams map[int]any
 
 	// ServeMuxError decorates all possible external errors to one kind.
 	ServeMuxError struct {
+		err     error
 		method  string
 		pattern string
-		err     error
 	}
 
 	// ServeMux is an HTTP request multiplexer.
@@ -25,36 +25,38 @@ type (
 	}
 )
 
-var (
+const (
 	// PathParamsCtxKey is a context key for using in context.Value.
-	PathParamsCtxKey = &contextKey{"path-params"}
+	PathParamsCtxKey contextKey = "path-params"
+)
 
-	// ErrMethod is the error if try set handler for wrong method inside ServeMux.
+var (
+	// ErrMethod is the error if try set handler for the wrong method inside ServeMux.
 	ErrMethod = errors.New("invalid method")
 
-	// ErrHandler is the error if try set nil handler inside ServeMux.
+	// ErrHandler is the error if try to set nil handler inside ServeMux.
 	ErrHandler = errors.New("nil handler")
 
-	// ErrPattern is the error if get invalid URL pattern.
+	// ErrPattern is the error if we get an invalid URL pattern.
 	ErrPattern = errors.New("invalid pattern")
 
-	// ErrDuplicate is the error if get multiple handlers for one method.
+	// ErrDuplicate is the error if we get multiple handlers for one method.
 	ErrDuplicate = errors.New("duplicate handler")
 
-	// ErrNotFound is the error if handler for combination method + pattern not exist.
+	// ErrNotFound is the error if handler for combination method and pattern not exist.
 	ErrNotFound = errors.New("not found")
 
 	// ErrPathParam signals that typed path param is invalid.
 	ErrPathParam = errors.New("invalid path param")
 
-	// ErrMultiplePathParam signals that insert tried perform
+	// ErrMultiplePathParam signals that insert tried to perform
 	// operation on invalid rule: for more see definition of node.
 	ErrMultiplePathParam = errors.New("multiple types for path param")
 )
 
 // Error implements the error's Error.
 func (e *ServeMuxError) Error() string {
-	return "httpmux: handler (" + e.method + ") " + e.pattern + " error: " + e.err.Error()
+	return "mixer: handler (" + e.method + ") " + e.pattern + " error: " + e.err.Error()
 }
 
 // Unwrap implements the error's Unwrap.
@@ -74,45 +76,51 @@ func GetPathParams(r *http.Request) PathParams {
 }
 
 // Handler returns the handler to use for the given request.
-func (mux *ServeMux) Handler(r *http.Request) (http.Handler, error) {
-	url := r.URL.EscapedPath()
+func (mux *ServeMux) Handler(req *http.Request) (http.Handler, error) {
+	url := req.URL.EscapedPath()
 	parts, _ := splitURL(url)
 
-	i := 0
+	idx := 0
 	node := mux.tree.root
 	params := make(PathParams)
 
 	for _, part := range parts {
-		child, ok := node.Children[part]
-		if ok {
+		child, found := node.Children[part]
+		if found {
 			node = child
+
 			continue
 		}
 
-		child, ok = node.Children[typeToken]
-		if !ok {
-			return nil, notFoundError(r.Method, url)
+		child, found = node.Children[typeToken]
+		if !found {
+			return nil, notFoundError(req.Method, url)
 		}
 
 		val, err := (*child.conv)(part)
 		if err != nil {
-			return nil, notFoundError(r.Method, url)
+			return nil, notFoundError(req.Method, url)
 		}
 
 		node = child
-		params[i] = val
-		i++
+		params[idx] = val
+		idx++
 	}
 
-	if node.Methods == nil || node.Methods[r.Method] == nil {
-		return nil, notFoundError(r.Method, url)
+	if node.Methods == nil {
+		return nil, notFoundError(req.Method, url)
+	}
+
+	handler := node.Methods[req.Method]
+	if handler == nil {
+		return nil, notFoundError(req.Method, url)
 	}
 
 	if len(params) != 0 {
-		*r = *r.WithContext(context.WithValue(r.Context(), PathParamsCtxKey, params))
+		*req = *req.WithContext(context.WithValue(req.Context(), PathParamsCtxKey, params))
 	}
 
-	return node.Methods[r.Method], nil
+	return handler, nil
 }
 
 // Handle registers the handler for the given method and pattern.
@@ -144,7 +152,7 @@ func (mux *ServeMux) Handle(method, pattern string, handler http.Handler) {
 
 	methods, err := mux.insert(parts)
 	if err != nil {
-		panic(&ServeMuxError{method, pattern, err})
+		panic(&ServeMuxError{err: err, method: method, pattern: pattern})
 	}
 
 	if methods[method] != nil {
@@ -254,27 +262,33 @@ func (mux *ServeMux) TraceFunc(pattern string, handler func(http.ResponseWriter,
 }
 
 // ServeHTTP implements a Handler's interface.
-func (mux *ServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h, err := mux.Handler(r)
+func (mux *ServeMux) ServeHTTP(writer http.ResponseWriter, req *http.Request) {
+	handler, err := mux.Handler(req)
 	if errors.Is(err, ErrNotFound) {
-		http.NotFound(w, r)
+		http.NotFound(writer, req)
+
 		return
 	}
 
-	h.ServeHTTP(w, r)
+	handler.ServeHTTP(writer, req)
 }
 
 // New allocates and returns a new ServeMux.
 func New() *ServeMux {
-	sc := convert(strConv)
-	ic := convert(intConv)
+	strC := new(convert(strConv))
+	intC := new(convert(intConv))
 
 	return &ServeMux{
-		tree: &tree{root: &node{tid: root}},
+		tree: &tree{root: &node{
+			conv:     nil,
+			Methods:  nil,
+			Children: nil,
+			tid:      root,
+		}},
 		converters: map[string]*convert{
-			"":    &sc,
-			"str": &sc,
-			"int": &ic,
+			"":    strC,
+			"str": strC,
+			"int": intC,
 		},
 	}
 }

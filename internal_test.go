@@ -2,40 +2,39 @@ package mixer
 
 import (
 	"net/http"
-	"strconv"
 	"testing"
 )
 
 func TestMethodError(t *testing.T) {
-	exp := &ServeMuxError{"method", "pattern", ErrMethod}
+	exp := &ServeMuxError{ErrMethod, "method", "pattern"}
 
 	as := Assert{t}
 	as.Equal(methodError("method", "pattern"), exp, "methodError() got")
 }
 
 func TestHandlerError(t *testing.T) {
-	exp := &ServeMuxError{"method", "pattern", ErrHandler}
+	exp := &ServeMuxError{ErrHandler, "method", "pattern"}
 
 	as := Assert{t}
 	as.Equal(handlerError("method", "pattern"), exp, "handlerError() got")
 }
 
 func TestPatternError(t *testing.T) {
-	exp := &ServeMuxError{"method", "pattern", ErrPattern}
+	exp := &ServeMuxError{ErrPattern, "method", "pattern"}
 
 	as := Assert{t}
 	as.Equal(patternError("method", "pattern"), exp, "patternError() got")
 }
 
 func TestDuplicateError(t *testing.T) {
-	exp := &ServeMuxError{"method", "pattern", ErrDuplicate}
+	exp := &ServeMuxError{ErrDuplicate, "method", "pattern"}
 
 	as := Assert{t}
 	as.Equal(duplicateError("method", "pattern"), exp, "duplicateError() got")
 }
 
 func TestNotFoundError(t *testing.T) {
-	exp := &ServeMuxError{"method", "pattern", ErrNotFound}
+	exp := &ServeMuxError{ErrNotFound, "method", "pattern"}
 
 	as := Assert{t}
 	as.Equal(notFoundError("method", "pattern"), exp, "notFoundError() got")
@@ -58,11 +57,7 @@ func TestIntConv(t *testing.T) {
 			name: "invalid",
 			s:    "one-two-three",
 			want: 0,
-			err: &strconv.NumError{
-				Func: "Atoi",
-				Num:  "one-two-three",
-				Err:  strconv.ErrSyntax,
-			},
+			err:  invalidIntError{"one-two-three"},
 		},
 	}
 
@@ -179,8 +174,11 @@ func TestSplitURL(t *testing.T) {
 
 func TestTreeDeepcopy(t *testing.T) {
 	as := Assert{t}
-	var ic convert = intConv
-	var sc convert = strConv
+
+	var (
+		ic convert = intConv
+		sc convert = strConv
+	)
 
 	origin := &tree{
 		root: &node{
@@ -214,7 +212,7 @@ func TestTreeDeepcopy(t *testing.T) {
 									Methods:  nil,
 									Children: nil,
 								},
-								//"sub-sub-ch2": nil, // this is unexpected situation
+								// "sub-sub-ch2": nil, // this is unexpected situation
 							},
 						},
 					},
@@ -310,10 +308,10 @@ func TestNodeInsert(t *testing.T) {
 		key string
 		in  *node
 	}
+
 	cases := []struct {
 		name     string
 		what     args
-		want     bool
 		whither  *node
 		expected *node
 	}{
@@ -323,7 +321,6 @@ func TestNodeInsert(t *testing.T) {
 				conv: &conv,
 				tid:  param,
 			}},
-			want:    true,
 			whither: &node{},
 			expected: &node{
 				Children: map[string]*node{
@@ -340,7 +337,6 @@ func TestNodeInsert(t *testing.T) {
 				conv: &conv,
 				tid:  other,
 			}},
-			want:    true,
 			whither: &node{},
 			expected: &node{
 				Children: map[string]*node{
@@ -357,7 +353,6 @@ func TestNodeInsert(t *testing.T) {
 				conv: &conv,
 				tid:  param,
 			}},
-			want: false,
 			whither: &node{
 				Children: map[string]*node{
 					"other": {
@@ -369,6 +364,10 @@ func TestNodeInsert(t *testing.T) {
 				Children: map[string]*node{
 					"other": {
 						tid: other,
+					},
+					"key": {
+						conv: &conv,
+						tid:  param,
 					},
 				},
 			},
@@ -379,7 +378,6 @@ func TestNodeInsert(t *testing.T) {
 				conv: &conv,
 				tid:  other,
 			}},
-			want: false,
 			whither: &node{
 				Children: map[string]*node{
 					"other": {
@@ -394,6 +392,10 @@ func TestNodeInsert(t *testing.T) {
 						conv: &conv,
 						tid:  param,
 					},
+					"key": {
+						conv: &conv,
+						tid:  other,
+					},
 				},
 			},
 		},
@@ -401,10 +403,9 @@ func TestNodeInsert(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := c.whither.insert(c.what.key, c.what.in)
+			c.whither.insert(c.what.key, c.what.in)
 
 			as := Assert{t}
-			as.BoolEqual(got, c.want, "node.insert() got")
 			as.EqualIndent(c.whither, c.expected, "node.insert() struct")
 		})
 	}
@@ -434,7 +435,8 @@ func TestServeMuxAddLogicCases(t *testing.T) {
 		"/": {
 			tid:     slash,
 			Methods: map[string]http.Handler{},
-		}}
+		},
+	}
 	_, err = mux.insert(parts)
 
 	as.Equal(err, nil, "with trailing slash")
@@ -473,7 +475,7 @@ func TestServeMuxAddLogicCases(t *testing.T) {
 
 	hm[http.MethodGet] = TestHandler("/")
 	exp.root.Children["/"].Methods[http.MethodGet] = TestHandler("/")
-	hm, err = mux.insert(parts)
+	_, err = mux.insert(parts)
 
 	as.Equal(err, nil, "correct handler map")
 	as.EqualIndent(mux.tree, exp, "correct handler map")
@@ -488,7 +490,8 @@ func TestServeMuxAddLogicCases(t *testing.T) {
 			tid:     param,
 			conv:    mux.converters[""],
 			Methods: map[string]http.Handler{http.MethodPut: TestHandler("a/b/:int/:")},
-		}}
+		},
+	}
 	hm, err = mux.insert(parts)
 	hm[http.MethodPut] = TestHandler("a/b/:int/:")
 
@@ -496,9 +499,12 @@ func TestServeMuxAddLogicCases(t *testing.T) {
 	as.EqualIndent(mux.tree, exp, "correct handler map and another converter")
 
 	parts = []string{"a", ":int"}
+	exp.root.
+		Children["a"].
+		Children[":"] = &node{tid: param, conv: mux.converters["int"], Methods: map[string]http.Handler{}}
 	_, err = mux.insert(parts)
 
-	as.Equal(err, ErrMultiplePathParam, "different type (b vs. :int)")
+	as.Equal(err, nil, "different type (b vs. :int)")
 	as.EqualIndent(mux.tree, exp, "different type (b vs. :int)")
 
 	parts = []string{"a", "b", ":str"}
@@ -508,9 +514,13 @@ func TestServeMuxAddLogicCases(t *testing.T) {
 	as.EqualIndent(mux.tree, exp, "different type (:int vs. :str)")
 
 	parts = []string{"a", "b", "c"}
+	exp.root.
+		Children["a"].
+		Children["b"].
+		Children["c"] = &node{Methods: map[string]http.Handler{}}
 	_, err = mux.insert(parts)
 
-	as.Equal(err, ErrMultiplePathParam, "different type (:int vs. c)")
+	as.Equal(err, nil, "different type (:int vs. c)")
 	as.EqualIndent(mux.tree, exp, "different type (:int vs. c)")
 
 	parts = []string{"a", "b", ":int", "/"}
@@ -533,7 +543,8 @@ func TestServeMuxAddLogicCases(t *testing.T) {
 		Children = map[string]*node{
 		"c": {
 			Methods: map[string]http.Handler{},
-		}}
+		},
+	}
 	_, err = mux.insert(parts)
 
 	as.Equal(err, nil, "invariant conv")
@@ -552,9 +563,19 @@ func TestServeMuxAddLogicCases(t *testing.T) {
 	as.EqualIndent(mux.tree, exp, "invariant for /")
 
 	parts = []string{"a", "b", ":int", ":", ":str"}
+	exp.root.
+		Children["a"].
+		Children["b"].
+		Children[":"].
+		Children[":"].
+		Children[":"] = &node{
+		tid:     param,
+		conv:    mux.converters["str"],
+		Methods: map[string]http.Handler{},
+	}
 	_, err = mux.insert(parts)
 
-	as.Equal(err, ErrMultiplePathParam, "prevent /, c and : together")
+	as.Equal(err, nil, "prevent /, c and : together")
 	as.EqualIndent(mux.tree, exp, "prevent /, c and : together")
 
 	parts = []string{"a", "b", ":mem"}
@@ -597,9 +618,10 @@ func TestServeMuxAddDirectCases(t *testing.T) {
 			wantRoot: &node{
 				Children: map[string]*node{
 					"a": {Methods: map[string]http.Handler{}},
+					":": {tid: param, conv: mux.converters["int"], Methods: map[string]http.Handler{}},
 				},
 			},
-			want: ErrMultiplePathParam,
+			want: nil,
 		},
 		{
 			name:  "a vs. /",
@@ -628,9 +650,10 @@ func TestServeMuxAddDirectCases(t *testing.T) {
 			wantRoot: &node{
 				Children: map[string]*node{
 					":": {tid: param, conv: mux.converters["int"], Methods: map[string]http.Handler{}},
+					"a": {Methods: map[string]http.Handler{}},
 				},
 			},
-			want: ErrMultiplePathParam,
+			want: nil,
 		},
 		{
 			name:  ":int vs. /",
@@ -754,9 +777,10 @@ func TestServeMuxAddDirectCases(t *testing.T) {
 				Children: map[string]*node{
 					"/": {tid: slash, Methods: map[string]http.Handler{}},
 					":": {tid: param, conv: mux.converters["int"], Methods: map[string]http.Handler{}},
+					"a": {Methods: map[string]http.Handler{}},
 				},
 			},
-			want: ErrMultiplePathParam,
+			want: nil,
 		},
 		{
 			name:  "/ and a vs. :int",
@@ -771,9 +795,10 @@ func TestServeMuxAddDirectCases(t *testing.T) {
 				Children: map[string]*node{
 					"/": {tid: slash, Methods: map[string]http.Handler{}},
 					"a": {Methods: map[string]http.Handler{}},
+					":": {tid: param, conv: mux.converters["int"], Methods: map[string]http.Handler{}},
 				},
 			},
-			want: ErrMultiplePathParam,
+			want: nil,
 		},
 		{
 			name:  "add sub node",
@@ -825,4 +850,11 @@ func TestServeMuxAddDirectCases(t *testing.T) {
 			mux.tree.root = nil
 		})
 	}
+}
+
+func TestInvalidIntErrorError(t *testing.T) {
+	err := invalidIntError{val: "hello world"}
+
+	as := Assert{t}
+	as.StrEqual(`mixer: invalid int "hello world"`, err.Error(), "invalidIntError.Error")
 }
